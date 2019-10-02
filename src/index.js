@@ -47,6 +47,7 @@ const USERS_UPDATE_EVENT_NAME = 'users-update';
           connection: ({ params: [socket] }) => {
             statusStorage.addField(socket);
             nameStorage.addField(socket);
+
             notifyClients();
           },
         },
@@ -54,6 +55,8 @@ const USERS_UPDATE_EVENT_NAME = 'users-update';
           disconnect: ({ socket }) => {
             statusStorage.removeField(socket);
             nameStorage.removeField(socket);
+
+            notifyClients();
           },
           [UPDATE_EVENT_NAME]: ({ params: [newStatus], socket}) => {
             statusStorage.set(socket, newStatus);
