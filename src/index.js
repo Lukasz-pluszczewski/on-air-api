@@ -1,51 +1,70 @@
 import config from './config';
-import createIo from 'socket.io';
 
 import simpleExpress from 'services/simpleExpress/simpleExpress';
+import createSocketServer from 'services/socketServer';
 import initializeStorage from 'services/storage';
 
 const UPDATE_EVENT_NAME = 'update';
+const UPDATE_NAME_EVENT_NAME = 'update-name';
+const USERS_UPDATE_EVENT_NAME = 'users-update';
+
 
 (async function() {
-  const storage = await initializeStorage([], true);
+  const statusStorage = await initializeStorage([], true);
+  const nameStorage = await initializeStorage([], true);
 
-  simpleExpress({
-    port: config.port,
-    routes: [],
-    routeParams: { storage },
-  })
+  const isOnAir = () => {
+    let onAir = false;
+    statusStorage.getStorage().forEach((value) => {
+      if (value === 'on-air') {
+        onAir = true;
+      }
+    });
+    return onAir;
+  };
+
+  simpleExpress({ port: config.port })
     .then(({ app, server }) => {
-      const io = createIo(server);
-
-      const isOnAir = () => {
-        let onAir = false;
-        storage.getStorage().forEach((value) => {
-          if (value === 'on-air') {
-            onAir = true;
-          }
-        });
-        return onAir;
-      };
-
-      const updateHandler = () => {
+      const notifyClients = () => {
         const onAir = isOnAir();
+        const users = [...statusStorage.getFields()].map(socket => ({
+          id: socket.id,
+          name: nameStorage.get(socket),
+          status: statusStorage.get(socket),
+        }));
 
-        [...storage.getFields()].forEach(socket => {
-          socket.emit('update', onAir ? 'on-air' : 'free');
+        [...statusStorage.getFields()].forEach(socket => {
+          socket.emit(UPDATE_EVENT_NAME, onAir ? 'on-air' : 'free');
+          socket.emit(USERS_UPDATE_EVENT_NAME, users);
         });
       };
-      storage.on(updateHandler);
+      statusStorage.on(notifyClients);
+      nameStorage.on(notifyClients);
 
-      io.on('connection', socket => {
-        storage.addField(socket);
-        socket.emit('update', isOnAir() ? 'on-air' : 'free');
-        socket.on('disconnect', () => {
-          storage.removeField(socket);
-        });
-        socket.on(UPDATE_EVENT_NAME, (status) => {
-          storage.set(socket, status);
-        });
+      createSocketServer({
+        server,
+        eventHandlers: {
+          connection: ({ params: [socket] }) => {
+            statusStorage.addField(socket);
+            nameStorage.addField(socket);
+            notifyClients();
+          },
+        },
+        socketEventHandlers: {
+          disconnect: ({ socket }) => {
+            statusStorage.removeField(socket);
+            nameStorage.removeField(socket);
+          },
+          [UPDATE_EVENT_NAME]: ({ params: [newStatus], socket}) => {
+            statusStorage.set(socket, newStatus);
+          },
+          [UPDATE_NAME_EVENT_NAME]: ({ params: [newName], socket }) => {
+            nameStorage.set(socket, newName);
+          },
+        },
+
       });
+
       console.log(`Started on port ${app.server.address().port}`);
     })
     .catch(error => console.error('Error', error));
